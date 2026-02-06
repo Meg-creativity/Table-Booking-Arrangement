@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>火鍋店現場調度系統</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body { font-family: 'Noto Sans TC', sans-serif; }
+        .custom-scrollbar::-webkit-scrollbar { width: 4px; }
+        .custom-scrollbar::-webkit-scrollbar-track { background: transparent; }
+        .custom-scrollbar::-webkit-scrollbar-thumb { background: #e2e8f0; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        
+        const Icon = ({ name, size = 20, className = "" }) => {
+            useEffect(() => {
+                if (window.lucide) { window.lucide.createIcons(); }
+            }, [name]);
+            return <i data-lucide={name} style={{ width: size, height: size }} className={`inline-block ${className}`}></i>;
+        };
+
+        const INITIAL_TABLES = [
+            { id: '1', capacity: 4 }, { id: '2', capacity: 4 },
+            { id: '3', capacity: 4 }, { id: '4', capacity: 4 },
+            { id: '5', capacity: 4 }, { id: '81', capacity: 2 },
+            { id: '85', capacity: 2 },
+        ];
+
+        const DINING_DURATION = 90;
+        const CLEANING_BUFFER = 10;
+        const MAX_GUESTS = 4; // 設定最大人數為 4
+
+        const App = () => {
+            const [tables, setTables] = useState(INITIAL_TABLES.map(t => ({ ...t, status: 'idle', currentGuest: null })));
+            const getTodayStr = () => new Date().toISOString().split('T')[0];
+            
+            const [reservations, setReservations] = useState(() => {
+                const saved = localStorage.getItem('hotpot_resv');
+                return saved ? JSON.parse(saved) : [
+                    { id: 1, date: getTodayStr(), time: '17:30', endTime: '19:00', nextAvailable: '19:10', name: '王小姐', count: 4, tableId: '1' }
+                ];
+            });
+
+            const [currentTime, setCurrentTime] = useState(new Date());
+            const [view, setView] = useState('tables'); 
+            const [selectedDate, setSelectedDate] = useState(getTodayStr());
+            const [isCheckInModalOpen, setIsCheckInModalOpen] = useState(false);
+            const [isResvModalOpen, setIsResvModalOpen] = useState(false);
+            const [editingId, setEditingId] = useState(null);
+            const [selectedTable, setSelectedTable] = useState(null);
+            const [resvForm, setResvForm] = useState({ date: getTodayStr(), time: '11:00', name: '', count: 1, tableId: '' });
+
+            useEffect(() => {
+                localStorage.setItem('hotpot_resv', JSON.stringify(reservations));
+            }, [reservations]);
+
+            useEffect(() => {
+                const timer = setInterval(() => setCurrentTime(new Date()), 1000);
+                return () => clearInterval(timer);
+            }, []);
+
+            const formatTime = (date) => date.toLocaleTimeString('zh-TW', { hour: '2-digit', minute: '2-digit', hour12: false });
+            
+            const timeToMinutes = (timeStr) => {
+                const [h, m] = timeStr.split(':').map(Number);
+                return h * 60 + m;
+            };
+
+            const minutesToTime = (totalMinutes) => {
+                const h = Math.floor(totalMinutes / 60);
+                const m = totalMinutes % 60;
+                return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+            };
+
+            const changeSelectedDate = (days) => {
+                const current = new Date(selectedDate);
+                current.setDate(current.getDate() + days);
+                const dateStr = current.toISOString().split('T')[0];
+                setSelectedDate(dateStr);
+            };
+
+            const getNextResvToday = (tableId) => {
+                const todayStr = getTodayStr();
+                const nowMin = timeToMinutes(formatTime(currentTime));
+                return reservations
+                    .filter(r => r.tableId === tableId && r.date === todayStr && timeToMinutes(r.time) > nowMin)
+                    .sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time))[0];
+            };
+
+            const canCheckInNow = (tableId) => {
+                const nextResv = getNextResvToday(tableId);
+                if (!nextResv) return { can: true };
+                const nowMin = timeToMinutes(formatTime(currentTime));
+                const limitMin = timeToMinutes(nextResv.time) - CLEANING_BUFFER;
+                const availableMins = limitMin - nowMin;
+                
+                return { 
+                    can: availableMins >= DINING_DURATION, 
+                    availableUntil: minutesToTime(limitMin),
+                    nextResv: nextResv
+                };
+            };
+
+            const checkTotalConflict = (tableId, dateStr, startTimeStr, excludeId = null) => {
+                const startMin = timeToMinutes(startTimeStr);
+                const endMin = startMin + DINING_DURATION + CLEANING_BUFFER;
+                return reservations.some(res => {
+                    if (res.tableId !== tableId || res.date !== dateStr || res.id === excludeId) return false;
+                    const resStart = timeToMinutes(res.time);
+                    const resEnd = timeToMinutes(res.nextAvailable);
+                    return (startMin < resEnd && resStart < endMin);
+                }) ? "已預約" : null;
+            };
+
+            const handleCheckIn = (tableId, name = "現場客人") => {
+                const startTime = new Date();
+                const endTime = new Date(startTime.getTime() + DINING_DURATION * 60000);
+                setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'occupied', currentGuest: { name, startTime, endTime } } : t));
+            };
+
+            const handleCheckOut = (tableId) => {
+                setTables(prev => prev.map(t => t.id === tableId ? { ...t, status: 'idle', currentGuest: null } : t));
+            };
+
+            const handleSaveResv = (e) => {
+                e.preventDefault();
+                const [h, m] = resvForm.time.split(':').map(Number);
+                const start = new Date(); start.setHours(h, m, 0);
+                const end = new Date(start.getTime() + DINING_DURATION * 60000);
+                const next = new Date(end.getTime() + CLEANING_BUFFER * 60000);
+                const times = { endTime: formatTime(end), nextAvailable: formatTime(next) };
+
+                if (editingId) {
+                    setReservations(prev => prev.map(r => r.id === editingId ? { ...resvForm, ...times, id: editingId } : r).sort((a,b) => a.time.localeCompare(b.time)));
+                } else {
+                    setReservations(prev => [...prev, { ...resvForm, ...times, id: Date.now() }].sort((a,b) => a.time.localeCompare(b.time)));
+                }
+                closeModal();
+            };
+
+            const closeModal = () => { 
+                setIsResvModalOpen(false); 
+                setEditingId(null); 
+                setResvForm({ date: selectedDate, time: '11:00', name: '', count: 1, tableId: '' }); 
+            };
+
+            const timeOptions = useMemo(() => {
+                const opts = [];
+                for (let h = 11; h <= 20; h++) {
+                    for (let m = 0; m < 60; m += 10) {
+                        const t = `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+                        if ((t >= '11:00' && t <= '13:30') || (t >= '17:00' && t <= '19:50')) opts.push(t);
+                    }
+                }
+                return opts;
+            }, []);
+
+            return (
+                <div className="min-h-screen bg-slate-50 text-slate-900 pb-10">
+                    <nav className="bg-white border-b px-6 py-4 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+                        <div className="flex items-center gap-3">
+                            <div className="bg-orange-500 p-2 rounded-lg text-white"><Icon name="users" /></div>
+                            <div>
+                                <h1 className="text-xl font-bold font-black">火鍋店調度系統</h1>
+                                <p className="text-xs text-slate-500">{formatTime(currentTime)} | 🟢 營業中</p>
+                            </div>
+                        </div>
+                        <div className="flex bg-slate-100 p-1 rounded-xl">
+                            <button onClick={() => setView('tables')} className={`px-4 py-2 rounded-lg text-sm font-bold ${view === 'tables' ? 'bg-white shadow-sm text-orange-600' : 'text-slate-500'}`}>桌位</button>
+                            <button onClick={() => setView('reservations')} className={`px-4 py-2 rounded-lg text-sm font-bold ${view === 'reservations' ? 'bg-white shadow-sm text-orange-600' : 'text-slate-500'}`}>預約</button>
+                        </div>
+                    </nav>
+
+                    <main className="p-6 max-w-7xl mx-auto">
+                        {view === 'tables' ? (
+                            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-6">
+                                {tables.map(table => {
+                                    const isOccupied = table.status === 'occupied';
+                                    const status = canCheckInNow(table.id);
+                                    const remaining = isOccupied ? Math.round((table.currentGuest.endTime - currentTime) / 60000) : null;
+                                    
+                                    return (
+                                        <div key={table.id} className={`border-2 rounded-3xl p-5 shadow-sm flex flex-col justify-between h-64 transition-all ${
+                                            isOccupied ? (remaining <= 0 ? 'bg-red-50 border-red-400' : 'bg-green-50 border-green-500') : 
+                                            (!status.can ? 'bg-slate-200 border-slate-300 shadow-inner' : 'bg-white border-slate-200 hover:border-orange-200')
+                                        }`}>
+                                            <div className="flex justify-between items-start">
+                                                <span className="text-3xl font-black">{table.id} <span className="text-xs">桌</span></span>
+                                                <div className="flex flex-col items-end gap-1">
+                                                    <span className="text-[10px] font-bold bg-slate-100 px-2 py-1 rounded-full uppercase tracking-tighter text-slate-500">{table.capacity}人桌</span>
+                                                    {status.availableUntil && !isOccupied && (
+                                                        <div className="text-[10px] font-bold text-orange-600 bg-white px-2 py-0.5 rounded border border-orange-200">
+                                                            限用至 {status.availableUntil}
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+
+                                            <div className="flex-grow flex flex-col justify-center py-2">
+                                                {isOccupied ? (
+                                                    <div className="space-y-1">
+                                                        <div className="font-bold text-lg flex items-center gap-2">
+                                                            <div className={`w-2 h-2 rounded-full ${remaining <= 0 ? 'bg-red-500' : 'bg-green-500'} animate-pulse`}></div>
+                                                            {table.currentGuest.name}
+                                                        </div>
+                                                        <div className={`text-xs font-bold ${remaining <= 0 ? 'text-red-500' : 'text-slate-500'}`}>
+                                                            {remaining <= 0 ? '已超時' : `剩餘 ${remaining} 分鐘`}
+                                                        </div>
+                                                    </div>
+                                                ) : (
+                                                    <div className="text-center">
+                                                        {status.nextResv ? (
+                                                            <div className="flex flex-col items-center gap-1">
+                                                                <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">下一組預約</div>
+                                                                <div className="text-xs font-bold text-orange-600 bg-orange-100 px-3 py-1 rounded-lg border border-orange-200">
+                                                                    {status.nextResv.time} ({status.nextResv.name} / {status.nextResv.count}人)
+                                                                </div>
+                                                            </div>
+                                                        ) : (
+                                                            <div className="text-[10px] font-bold text-slate-300 italic uppercase">Available</div>
+                                                        )}
+                                                    </div>
+                                                )}
+                                            </div>
+
+                                            <div className="pt-2">
+                                                {isOccupied ? (
+                                                    <button onClick={() => handleCheckOut(table.id)} className="w-full py-2 bg-white rounded-xl border-2 border-slate-100 font-bold text-sm shadow-sm hover:bg-slate-50 active:scale-95 transition-all">結帳清檯</button>
+                                                ) : (
+                                                    status.can ? 
+                                                    <button onClick={() => { setSelectedTable(table); setIsCheckInModalOpen(true); }} className="w-full py-3 rounded-2xl bg-orange-500 text-white font-black shadow-lg hover:bg-orange-600 transition-all active:scale-95">現場帶位</button> :
+                                                    <div className="flex flex-col items-center py-2 bg-slate-300/30 rounded-2xl border border-slate-300">
+                                                        <Icon name="lock" size={16} className="text-slate-400 mb-1" />
+                                                        <div className="text-[10px] font-bold text-slate-500 uppercase tracking-tighter">保留中</div>
+                                                    </div>
+                                                )}
+                                            </div>
+                                        </div>
+                                    );
+                                })}
+                            </div>
+                        ) : (
+                            <div className="bg-white rounded-3xl shadow-sm border overflow-hidden animate-in fade-in duration-500">
+                                <div className="p-6 border-b flex flex-col md:flex-row gap-4 justify-between items-center bg-white">
+                                    <div className="flex items-center gap-4">
+                                        <div className="bg-orange-100 p-2 rounded-xl text-orange-600"><Icon name="calendar" size={20} /></div>
+                                        <div className="flex items-center gap-2 bg-slate-100 p-1 rounded-xl">
+                                            <button onClick={() => changeSelectedDate(-1)} className="p-2 hover:bg-white rounded-lg transition-all text-slate-400 hover:text-orange-500"><Icon name="chevron-left" /></button>
+                                            <span className="px-4 font-black text-slate-700 min-w-[140px] text-center">
+                                                {selectedDate === getTodayStr() ? <span className="text-orange-500 mr-1">今日</span> : ''} {selectedDate}
+                                            </span>
+                                            <button onClick={() => changeSelectedDate(1)} className="p-2 hover:bg-white rounded-lg transition-all text-slate-400 hover:text-orange-500"><Icon name="chevron-right" /></button>
+                                        </div>
+                                    </div>
+                                    <button onClick={() => setIsResvModalOpen(true)} className="bg-orange-500 text-white px-5 py-2.5 rounded-2xl text-sm font-bold flex items-center gap-2 hover:bg-orange-600 shadow-lg shadow-orange-100 transition-all">
+                                        <Icon name="plus" size={18} /> 新增預約
+                                    </button>
+                                </div>
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                            <tr><th className="px-6 py-4">時間</th><th className="px-6 py-4 text-orange-500">桌號</th><th className="px-6 py-4">姓名 / 人數</th><th className="px-6 py-4 text-right">管理</th></tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-50">
+                                            {reservations.filter(r => r.date === selectedDate).length === 0 ? (
+                                                <tr><td colSpan="4" className="px-6 py-16 text-center text-slate-400 italic font-bold">該日期尚無預約資料</td></tr>
+                                            ) : (
+                                                reservations.filter(r => r.date === selectedDate).map(res => (
+                                                    <tr key={res.id} className="hover:bg-slate-50 transition-colors">
+                                                        <td className="px-6 py-4 font-bold text-slate-700">{res.time} <span className="text-[10px] text-slate-300 ml-1">~ {res.endTime}</span></td>
+                                                        <td className="px-6 py-4 font-black text-xl">{res.tableId}</td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="font-bold text-slate-600">{res.name}</div>
+                                                            <div className="text-[10px] font-bold text-orange-500 uppercase">{res.count} 人</div>
+                                                        </td>
+                                                        <td className="px-6 py-4 text-right">
+                                                            <button onClick={() => { setEditingId(res.id); setResvForm(res); setIsResvModalOpen(true); }} className="text-slate-400 hover:text-blue-500 p-2 transition-colors"><Icon name="edit-3" size={18}/></button>
+                                                            <button onClick={() => setReservations(prev => prev.filter(p => p.id !== res.id))} className="text-slate-300 hover:text-red-500 p-2 transition-colors"><Icon name="trash-2" size={18}/></button>
+                                                        </td>
+                                                    </tr>
+                                                ))
+                                            )}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {/* 預約 Modal */}
+                    {isResvModalOpen && (
+                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in fade-in duration-200">
+                            <div className="bg-white rounded-[2rem] w-full max-w-md overflow-hidden shadow-2xl">
+                                <div className={`p-6 ${editingId ? 'bg-blue-600' : 'bg-orange-600'} text-white`}>
+                                    <h3 className="text-xl font-black tracking-wider">{editingId ? '編輯預約資料' : '建立新預約'}</h3>
+                                    <p className="text-[10px] opacity-80 font-bold tracking-widest uppercase">{selectedDate} / {resvForm.time}</p>
+                                </div>
+                                <div className="p-8 space-y-5">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase">日期</label>
+                                            <input type="date" className="w-full border-2 border-slate-100 p-3 rounded-xl font-bold text-sm outline-none focus:border-orange-500 bg-slate-50" value={resvForm.date} onChange={e => setResvForm({...resvForm, date: e.target.value})} />
+                                        </div>
+                                        <div className="space-y-1">
+                                            <label className="text-[10px] font-black text-slate-400 uppercase">時間</label>
+                                            <select className="w-full border-2 border-slate-100 p-3 rounded-xl font-bold text-sm outline-none focus:border-orange-500 bg-slate-50" value={resvForm.time} onChange={e => setResvForm({...resvForm, time: e.target.value})}>
+                                                {timeOptions.map(t => <option key={t} value={t}>{t}</option>)}
+                                            </select>
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-1">
+                                        <label className="text-[10px] font-black text-slate-400 uppercase">顧客姓名</label>
+                                        <input placeholder="輸入稱呼..." className="w-full border-2 border-slate-100 p-3 rounded-xl font-bold outline-none focus:border-orange-500 bg-slate-50" value={resvForm.name} onChange={e => setResvForm({...resvForm, name: e.target.value})} />
+                                    </div>
+                                    
+                                    {/* 人數選擇區塊 - 調整為 1-4 人 */}
+                                    <div className="space-y-2">
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">用餐人數 (最多4位)</div>
+                                        <div className="flex gap-3">
+                                            {[1, 2, 3, 4].map(n => (
+                                                <button key={n} onClick={() => setResvForm({...resvForm, count: n})} className={`flex-1 h-12 rounded-xl border-2 font-black transition-all ${resvForm.count === n ? 'border-orange-500 bg-orange-50 text-orange-600 scale-105 shadow-sm' : 'border-slate-100 text-slate-400 hover:border-slate-200'}`}>
+                                                    {n} <span className="text-[10px] ml-1">人</span>
+                                                </button>
+                                            ))}
+                                        </div>
+                                    </div>
+
+                                    <div className="space-y-2">
+                                        <div className="text-[10px] font-black text-slate-400 uppercase tracking-widest">分配桌位</div>
+                                        <div className="grid grid-cols-2 gap-2 max-h-32 overflow-y-auto custom-scrollbar p-1">
+                                            {INITIAL_TABLES.map(t => {
+                                                const conflict = checkTotalConflict(t.id, resvForm.date, resvForm.time, editingId);
+                                                return (
+                                                    <button key={t.id} disabled={!!conflict} onClick={() => setResvForm({...resvForm, tableId: t.id})} className={`p-3 rounded-xl border-2 font-black transition-all ${resvForm.tableId === t.id ? 'border-orange-500 bg-orange-50 text-orange-600 shadow-sm' : conflict ? 'opacity-20 bg-slate-100 cursor-not-allowed border-transparent' : 'border-slate-100 hover:border-orange-200 hover:bg-slate-50'}`}>
+                                                        {t.id} 桌 {conflict && <span className="block text-[8px] font-normal uppercase mt-0.5">Occupied</span>}
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                    </div>
+                                    <div className="flex gap-3 pt-2">
+                                        <button onClick={closeModal} className="flex-1 py-3 font-bold text-slate-400 hover:text-slate-600 transition-colors">取消</button>
+                                        <button onClick={handleSaveResv} disabled={!resvForm.tableId || !resvForm.name} className="flex-1 py-3 bg-orange-500 text-white font-black rounded-xl shadow-lg shadow-orange-100 disabled:opacity-30 transition-all hover:bg-orange-600 active:scale-95">完成儲存</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
+                    {/* 帶位 Modal */}
+                    {isCheckInModalOpen && (
+                        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-50 p-4 backdrop-blur-sm animate-in zoom-in duration-200">
+                            <div className="bg-white rounded-[2rem] w-full max-w-sm p-8 shadow-2xl">
+                                <div className="text-center mb-6">
+                                    <div className="w-16 h-16 bg-orange-100 text-orange-600 rounded-2xl flex items-center justify-center mx-auto mb-4">
+                                        <Icon name="log-in" size={32} />
+                                    </div>
+                                    <h3 className="text-2xl font-black mb-1">現場帶位</h3>
+                                    <p className="text-sm text-slate-400 font-bold">預計安排：<span className="text-orange-600 font-black">{selectedTable?.id} 號桌</span></p>
+                                </div>
+                                <div className="space-y-4">
+                                    <input id="nameIn" placeholder="客人稱呼 (例: 王小姐)" className="w-full border-2 border-slate-100 p-4 rounded-2xl font-bold outline-none focus:border-orange-500 bg-slate-50 text-lg shadow-inner" autoFocus />
+                                    <div className="flex gap-3">
+                                        <button onClick={() => setIsCheckInModalOpen(false)} className="flex-1 py-4 font-bold text-slate-400 hover:text-slate-600">返回</button>
+                                        <button onClick={() => { handleCheckIn(selectedTable.id, document.getElementById('nameIn').value || "現場客"); setIsCheckInModalOpen(false); }} className="flex-1 py-4 bg-slate-900 text-white font-black rounded-2xl shadow-xl hover:bg-black active:scale-95 transition-all">確認入座</button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
