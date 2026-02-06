@@ -4,20 +4,6 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>黑色公鹿排位系統</title>
-    const timeInput = document.querySelector('input[type="time"]');
-
-timeInput.addEventListener('change', function() {
-    const time = this.value; // 格式為 "HH:mm"
-    if (!time) return;
-
-    const isLunch = (time >= "11:00" && time <= "13:30");
-    const isDinner = (time >= "17:00" && time <= "19:50");
-
-    if (!isLunch && !isDinner) {
-        alert("抱歉，該時段非營業時間。\n營業時間為：\n11:00~13:30\n17:00~19:50");
-        this.value = ""; // 清空不正確的時間
-    }
-});
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
