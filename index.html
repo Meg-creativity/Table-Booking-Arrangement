@@ -1,0 +1,486 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>黑色公鹿排位管理系統</title>
+    <!-- Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script src="https://unpkg.com/react@18/umd/react.development.js"></script>
+    <script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js"></script>
+    <!-- Babel for JSX -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <!-- Lucide Icons -->
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;500;700;900&display=swap');
+        body {
+            font-family: 'Noto Sans TC', sans-serif;
+        }
+    </style>
+</head>
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+        
+        // Lucide Icon Wrapper Component
+        const Icon = ({ name, size = 16, className = "" }) => {
+            const [svg, setSvg] = useState("");
+            useEffect(() => {
+                if (window.lucide) {
+                    const iconElement = document.createElement('div');
+                    const icon = window.lucide.icons[name];
+                    if (icon) {
+                        const svgString = window.lucide.createIcons({
+                            icons: { [name]: icon },
+                            attrs: { size, class: className }
+                        });
+                    }
+                }
+            }, [name, size, className]);
+
+            return <i data-lucide={name} style={{ width: size, height: size }} className={className}></i>;
+        };
+
+        // Re-declaring icons for easy use in JSX
+        const Clock = ({size, className}) => <i data-lucide="clock" className={className} style={{width: size, height: size}}></i>;
+        const Users = ({size, className}) => <i data-lucide="users" className={className} style={{width: size, height: size}}></i>;
+        const Calendar = ({size, className}) => <i data-lucide="calendar" className={className} style={{width: size, height: size}}></i>;
+        const CheckCircle = ({size, className}) => <i data-lucide="check-circle" className={className} style={{width: size, height: size}}></i>;
+        const AlertCircle = ({size, className}) => <i data-lucide="alert-circle" className={className} style={{width: size, height: size}}></i>;
+        const Trash2 = ({size, className}) => <i data-lucide="trash-2" className={className} style={{width: size, height: size}}></i>;
+        const Edit3 = ({size, className}) => <i data-lucide="edit-3" className={className} style={{width: size, height: size}}></i>;
+        const PlusCircle = ({size, className}) => <i data-lucide="plus-circle" className={className} style={{width: size, height: size}}></i>;
+        const UserPlus = ({size, className}) => <i data-lucide="user-plus" className={className} style={{width: size, height: size}}></i>;
+        const X = ({size, className}) => <i data-lucide="x" className={className} style={{width: size, height: size}}></i>;
+        const ChevronRight = ({size, className}) => <i data-lucide="chevron-right" className={className} style={{width: size, height: size}}></i>;
+        const ChevronLeft = ({size, className}) => <i data-lucide="chevron-left" className={className} style={{width: size, height: size}}></i>;
+        const CreditCard = ({size, className}) => <i data-lucide="credit-card" className={className} style={{width: size, height: size}}></i>;
+        const Phone = ({size, className}) => <i data-lucide="phone" className={className} style={{width: size, height: size}}></i>;
+        const CalendarClock = ({size, className}) => <i data-lucide="calendar-clock" className={className} style={{width: size, height: size}}></i>;
+        const Sparkles = ({size, className}) => <i data-lucide="sparkles" className={className} style={{width: size, height: size}}></i>;
+
+        const App = () => {
+            const getLocalDateString = (date) => {
+                const offset = date.getTimezoneOffset();
+                const localDate = new Date(date.getTime() - (offset * 60 * 1000));
+                return localDate.toISOString().split('T')[0];
+            };
+
+            const TABLES = [
+                { id: '1', capacity: 4 },
+                { id: '2', capacity: 4 },
+                { id: '3', capacity: 4 },
+                { id: '4', capacity: 4 },
+                { id: '5', capacity: 4 },
+                { id: '81', capacity: 2 },
+                { id: '85', capacity: 2 },
+            ];
+
+            const SHIFTS = [
+                { id: 'lunch', label: '午餐', start: '11:00', lastEntry: '13:30', end: '15:00' },
+                { id: 'dinner', label: '晚餐', start: '17:00', lastEntry: '19:50', end: '21:30' }
+            ];
+
+            const DURATION = 90; 
+            const BUFFER = 10;   
+            const NOTIFY_BEFORE = 30; 
+            const PREPARE_BEFORE = 60;
+
+            const [activeTab, setActiveTab] = useState('tableStatus');
+            const [bookings, setBookings] = useState([]);
+            const [currentDate, setCurrentDate] = useState(getLocalDateString(new Date()));
+            const [currentTime, setCurrentTime] = useState(new Date());
+            const [quickSeatModal, setQuickSeatModal] = useState({ isOpen: false, tableId: null });
+            const [editingBooking, setEditingBooking] = useState(null);
+            const [formData, setFormData] = useState({
+                name: '', phone: '', guests: 2, time: '11:00', tableId: '', date: currentDate
+            });
+
+            useEffect(() => {
+                const timer = setInterval(() => {
+                    setCurrentTime(new Date());
+                }, 10000);
+                return () => clearInterval(timer);
+            }, []);
+
+            useEffect(() => {
+                lucide.createIcons();
+            });
+
+            useEffect(() => {
+                if (!editingBooking) {
+                    setFormData(prev => ({ ...prev, date: currentDate }));
+                }
+            }, [currentDate, editingBooking]);
+
+            const timeToMinutes = (timeStr) => {
+                if (!timeStr) return 0;
+                const [h, m] = timeStr.split(':').map(Number);
+                return h * 60 + m;
+            };
+
+            const minutesToTime = (totalMinutes) => {
+                const h = Math.floor(totalMinutes / 60);
+                const m = totalMinutes % 60;
+                return `${h.toString().padStart(2, '0')}:${m.toString().padStart(2, '0')}`;
+            };
+
+            const getEndTime = (startTimeStr) => minutesToTime(timeToMinutes(startTimeStr) + DURATION);
+            const getAvailableTime = (startTimeStr) => minutesToTime(timeToMinutes(startTimeStr) + DURATION + BUFFER);
+
+            const getNextAvailableStatus = (availableTimeStr) => {
+                const availMins = timeToMinutes(availableTimeStr);
+                const lunchShift = SHIFTS[0];
+                const dinnerShift = SHIFTS[1];
+                if (availMins <= timeToMinutes(lunchShift.lastEntry)) return { isValid: true, text: `下一批：${availableTimeStr}` };
+                if (availMins < timeToMinutes(dinnerShift.start)) return { isValid: true, text: `晚餐首批：${dinnerShift.start}` };
+                if (availMins <= timeToMinutes(dinnerShift.lastEntry)) return { isValid: true, text: `下一批：${availableTimeStr}` };
+                return { isValid: false, text: "班次結束" };
+            };
+
+            const isToday = useMemo(() => currentDate === getLocalDateString(new Date()), [currentDate]);
+
+            const generateTimeOptions = () => {
+                const options = [];
+                SHIFTS.forEach(shift => {
+                    let current = timeToMinutes(shift.start);
+                    const last = timeToMinutes(shift.lastEntry);
+                    while (current <= last) {
+                        options.push(minutesToTime(current));
+                        current += 10;
+                    }
+                });
+                return options;
+            };
+
+            const isTableConflict = (tableId, date, startTime, excludeId = null) => {
+                const startMins = timeToMinutes(startTime);
+                const endMinsWithBuffer = startMins + DURATION + BUFFER;
+                return bookings.some(b => {
+                    if (b.id === excludeId || b.tableId !== tableId || b.date !== date) return false;
+                    const bStart = timeToMinutes(b.time);
+                    const bAvailable = timeToMinutes(b.availableTime);
+                    return (startMins < bAvailable) && (endMinsWithBuffer > bStart);
+                });
+            };
+
+            const handleQuickSeat = (guests) => {
+                const nowStr = currentTime.getHours().toString().padStart(2, '0') + ":" + currentTime.getMinutes().toString().padStart(2, '0');
+                const newEntry = {
+                    id: Date.now().toString(),
+                    name: `現場客(${quickSeatModal.tableId})`,
+                    phone: '-',
+                    guests: guests,
+                    time: nowStr,
+                    endTime: getEndTime(nowStr),
+                    availableTime: getAvailableTime(nowStr), 
+                    tableId: quickSeatModal.tableId,
+                    date: currentDate,
+                    isWalkIn: true,
+                    isFinished: false 
+                };
+                setBookings(prev => [...prev, newEntry]);
+                setQuickSeatModal({ isOpen: false, tableId: null });
+            };
+
+            const handleCheckout = (bookingId) => {
+                const nowStr = currentTime.getHours().toString().padStart(2, '0') + ":" + currentTime.getMinutes().toString().padStart(2, '0');
+                const nowMins = timeToMinutes(nowStr);
+                setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, endTime: nowStr, availableTime: minutesToTime(nowMins + BUFFER), isFinished: true } : b));
+            };
+
+            const handleFinishCleaning = (bookingId) => {
+                const nowStr = currentTime.getHours().toString().padStart(2, '0') + ":" + currentTime.getMinutes().toString().padStart(2, '0');
+                setBookings(prev => prev.map(b => b.id === bookingId ? { ...b, availableTime: nowStr } : b));
+            };
+
+            const handleSaveBooking = () => {
+                if (!formData.name || !formData.tableId) return alert("請填寫姓名並選擇桌號");
+                const newBooking = { 
+                    ...formData, 
+                    id: editingBooking ? editingBooking.id : Date.now().toString(), 
+                    endTime: getEndTime(formData.time), 
+                    availableTime: getAvailableTime(formData.time), 
+                    isFinished: false 
+                };
+                setBookings(editingBooking ? bookings.map(b => b.id === editingBooking.id ? newBooking : b) : [...bookings, newBooking]);
+                setEditingBooking(null);
+                setFormData({ name: '', phone: '', guests: 2, time: '11:00', tableId: '', date: currentDate });
+                setActiveTab('bookingList');
+            };
+
+            const handleEditBooking = (booking) => {
+                setEditingBooking(booking);
+                setFormData(booking);
+                setActiveTab('newBooking');
+            };
+
+            const TableStatusView = () => {
+                const nowStr = currentTime.getHours().toString().padStart(2, '0') + ":" + currentTime.getMinutes().toString().padStart(2, '0');
+                const nowMins = timeToMinutes(nowStr);
+
+                return (
+                    <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-6">
+                        {TABLES.map(table => {
+                            const currentOccupy = isToday ? bookings.find(b => b.tableId === table.id && b.date === currentDate && !b.isFinished && nowMins >= timeToMinutes(b.time) && nowMins < timeToMinutes(b.endTime)) : null;
+                            const isCleaning = isToday ? bookings.find(b => b.tableId === table.id && b.date === currentDate && b.isFinished && nowMins < timeToMinutes(b.availableTime)) : null;
+                            const todaysBookings = bookings.filter(b => b.tableId === table.id && b.date === currentDate && !b.isFinished).sort((a, b) => timeToMinutes(a.time) - timeToMinutes(b.time));
+                            const nextBooking = isToday ? todaysBookings.find(b => timeToMinutes(b.time) > (currentOccupy ? timeToMinutes(currentOccupy.time) : nowMins)) : todaysBookings[0];
+
+                            let borderClass = "border-l-slate-200";
+                            let statusText = "空位";
+                            let statusColor = "text-slate-400";
+                            let isUrgentNext = false;
+
+                            if (currentOccupy) {
+                                const timeLeft = timeToMinutes(currentOccupy.endTime) - nowMins;
+                                if (timeLeft <= NOTIFY_BEFORE) {
+                                    borderClass = "border-l-red-500 shadow-red-50";
+                                    statusText = "即將結束";
+                                    statusColor = "text-red-500 animate-pulse";
+                                } else {
+                                    borderClass = "border-l-blue-500 shadow-blue-50";
+                                    statusText = "用餐中";
+                                    statusColor = "text-blue-600";
+                                }
+                            } else if (isCleaning) {
+                                borderClass = "border-l-orange-400 shadow-orange-50 bg-orange-50/20";
+                                statusText = "清潔中";
+                                statusColor = "text-orange-500";
+                            } else if (nextBooking) {
+                                const minsToNext = isToday ? (timeToMinutes(nextBooking.time) - nowMins) : 999;
+                                if (isToday && minsToNext <= PREPARE_BEFORE) {
+                                    borderClass = "border-l-purple-500 shadow-purple-100 bg-purple-50/30";
+                                    statusText = "預約保留";
+                                    statusColor = "text-purple-600 font-black";
+                                    isUrgentNext = true;
+                                } else if (!isToday) {
+                                    borderClass = "border-l-slate-300";
+                                    statusText = "已有預約";
+                                    statusColor = "text-slate-500 font-bold";
+                                }
+                            }
+
+                            return (
+                                <div key={table.id} className={`bg-white border border-slate-100 border-l-4 rounded-xl p-5 shadow-sm transition-all ${borderClass}`}>
+                                    <div className="flex justify-between items-start mb-4">
+                                        <div>
+                                            <h3 className="text-3xl font-black text-slate-800">{table.id}</h3>
+                                            <p className={`text-sm font-bold mt-1 ${statusColor}`}>{statusText}</p>
+                                        </div>
+                                        <div className="text-right">
+                                            <span className="text-xs bg-slate-50 text-slate-500 px-2 py-1 rounded-full font-bold">{table.capacity} 人</span>
+                                            {currentOccupy && currentOccupy.guests === 5 && (
+                                                <div className="mt-1 flex items-center justify-end gap-0.5 text-[10px] text-red-500 font-black">
+                                                    <AlertCircle size={10} /> 共鍋
+                                                </div>
+                                            )}
+                                        </div>
+                                    </div>
+                                    
+                                    <div className="min-h-[90px] flex flex-col justify-center">
+                                        {currentOccupy ? (
+                                            <>
+                                                <p className="text-sm font-bold text-slate-700 truncate">{currentOccupy.name}</p>
+                                                <p className="text-[11px] text-slate-500 mb-2 font-medium italic">離場：{currentOccupy.endTime}</p>
+                                                <button onClick={() => handleCheckout(currentOccupy.id)} className="w-full py-2 bg-green-50 text-green-600 border border-green-100 rounded-xl font-bold hover:bg-green-600 hover:text-white transition-all text-xs flex items-center justify-center gap-1">
+                                                    <CreditCard size={14} /> 結帳
+                                                </button>
+                                            </>
+                                        ) : isCleaning ? (
+                                            <div className="text-center flex flex-col gap-2">
+                                                <div>
+                                                    <p className="text-xs text-orange-400 font-bold">清潔至 {isCleaning.availableTime}</p>
+                                                    <div className="w-full bg-orange-100 h-1 mt-1 rounded-full overflow-hidden">
+                                                        <div className="bg-orange-400 h-full animate-pulse" style={{width: '60%'}}></div>
+                                                    </div>
+                                                </div>
+                                                <button onClick={() => handleFinishCleaning(isCleaning.id)} className="w-full py-2 bg-orange-500 text-white rounded-xl font-bold hover:bg-orange-600 transition-all text-xs flex items-center justify-center gap-1 shadow-sm">
+                                                    <Sparkles size={14} /> 清潔完成
+                                                </button>
+                                            </div>
+                                        ) : nextBooking && isUrgentNext ? (
+                                            <div className="flex flex-col gap-2">
+                                                <div className="bg-white border border-purple-200 p-2 rounded-lg">
+                                                    <p className="text-[11px] text-purple-700 font-black flex items-center gap-1"><Clock size={10}/> 抵達：{nextBooking.time}</p>
+                                                    <p className="text-xs font-bold text-purple-900 truncate">{nextBooking.name} ({nextBooking.guests}位)</p>
+                                                </div>
+                                                <button disabled className="w-full py-3 bg-slate-100 text-slate-400 rounded-xl border border-slate-200 font-bold text-xs flex items-center justify-center gap-1 cursor-not-allowed">
+                                                    <X size={14} /> 預約保留中
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <button disabled={!isToday} onClick={() => setQuickSeatModal({ isOpen: true, tableId: table.id })} className={`w-full py-3 rounded-xl border border-dashed font-bold flex items-center justify-center gap-2 ${isToday ? 'bg-slate-50 text-slate-400 border-slate-200 hover:bg-orange-50 hover:text-orange-600' : 'bg-slate-50 text-slate-200 border-slate-100 cursor-not-allowed'}`}>
+                                                <UserPlus size={18} /> {isToday ? '即刻帶位' : '預覽模式'}
+                                            </button>
+                                        )}
+                                    </div>
+                                    <div className="mt-4 pt-3 border-t border-slate-50">
+                                        <div className="flex justify-between items-center text-[11px]">
+                                           <span className="text-slate-400">下場預約</span>
+                                           <span className="font-bold text-slate-600">{nextBooking ? `${nextBooking.time} (${nextBooking.name})` : '目前無預約'}</span>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })}
+                    </div>
+                );
+            };
+
+            return (
+                <div className="min-h-screen bg-slate-50/50 text-slate-900 pb-24">
+                    <header className="bg-white border-b sticky top-0 z-20 px-6 py-4 flex flex-wrap justify-between items-center gap-4 shadow-sm">
+                        <div>
+                            <h1 className="text-xl font-black text-slate-800 tracking-tight">火鍋店智能排位系統</h1>
+                            <p className="text-xs text-slate-400 font-bold flex items-center gap-1 mt-0.5">
+                                <Clock size={12}/> {isToday ? `系統時間：${currentTime.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit', second:'2-digit'})}` : '日期檢視模式'}
+                            </p>
+                        </div>
+                        <div className="flex items-center gap-1 bg-slate-100 p-1 rounded-full border border-slate-200 shadow-inner">
+                            <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() - 1); setCurrentDate(getLocalDateString(d)); }} className="p-2 hover:bg-white rounded-full transition-all text-slate-500 shadow-sm"><ChevronLeft size={18}/></button>
+                            <div className="flex items-center gap-2 px-3">
+                               <Calendar size={14} className="text-slate-400" />
+                               <input type="date" className="bg-transparent text-sm font-bold outline-none cursor-pointer text-slate-700" value={currentDate} onChange={(e) => setCurrentDate(e.target.value)} />
+                            </div>
+                            <button onClick={() => { const d = new Date(currentDate); d.setDate(d.getDate() + 1); setCurrentDate(getLocalDateString(d)); }} className="p-2 hover:bg-white rounded-full transition-all text-slate-500 shadow-sm"><ChevronRight size={18}/></button>
+                        </div>
+                    </header>
+
+                    <main className="p-6 max-w-7xl mx-auto">
+                        <div className="flex justify-between items-center mb-8 gap-4 overflow-x-auto pb-2">
+                            <div className="flex gap-2">
+                                <button onClick={() => setActiveTab('tableStatus')} className={`px-6 py-2.5 rounded-full font-bold transition-all text-sm flex items-center gap-2 whitespace-nowrap ${activeTab === 'tableStatus' ? 'bg-slate-800 text-white shadow-lg' : 'bg-white border text-slate-500 hover:bg-slate-50'}`}>
+                                    <Users size={16}/> 現場桌況
+                                </button>
+                                <button onClick={() => setActiveTab('bookingList')} className={`px-6 py-2.5 rounded-full font-bold transition-all text-sm flex items-center gap-2 whitespace-nowrap ${activeTab === 'bookingList' ? 'bg-slate-800 text-white shadow-lg' : 'bg-white border text-slate-500 hover:bg-slate-50'}`}>
+                                    <CalendarClock size={16}/> 預約清單
+                                </button>
+                            </div>
+                            <button onClick={() => { setFormData({ name: '', phone: '', guests: 2, time: '11:00', tableId: '', date: currentDate }); setEditingBooking(null); setActiveTab('newBooking'); }} className="px-6 py-2.5 rounded-full font-bold bg-orange-600 text-white shadow-md text-sm flex items-center gap-2 hover:bg-orange-700 transition-all whitespace-nowrap"><PlusCircle size={18}/>新增預約</button>
+                        </div>
+
+                        {activeTab === 'tableStatus' && <TableStatusView />}
+                        
+                        {activeTab === 'bookingList' && (
+                            <div className="bg-white rounded-2xl shadow-sm border border-slate-100 overflow-hidden">
+                                <div className="overflow-x-auto">
+                                    <table className="w-full text-left">
+                                        <thead className="bg-slate-50 border-b">
+                                            <tr>
+                                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">時間段</th>
+                                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">桌號</th>
+                                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">客人資訊</th>
+                                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">人數</th>
+                                                <th className="px-6 py-4 text-xs font-bold text-slate-400 uppercase">操作</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody className="divide-y divide-slate-100">
+                                            {bookings.filter(b => b.date === currentDate).sort((a,b) => timeToMinutes(a.time) - timeToMinutes(b.time)).map(booking => {
+                                                const nextStatus = getNextAvailableStatus(booking.availableTime);
+                                                return (
+                                                    <tr key={booking.id} className={`hover:bg-slate-50/50 transition-colors ${booking.isFinished ? 'opacity-50' : ''}`}>
+                                                        <td className="px-6 py-4 font-bold text-sm text-slate-800">{booking.time} - {booking.endTime}</td>
+                                                        <td className="px-6 py-4 text-sm font-bold">{booking.tableId} 號桌</td>
+                                                        <td className="px-6 py-4 text-sm font-bold">{booking.name} <br/><span className="text-xs text-slate-400 font-normal">{booking.phone}</span></td>
+                                                        <td className="px-6 py-4 text-sm font-bold">
+                                                            <div className="flex flex-col">
+                                                                <span>{booking.guests} 位</span>
+                                                                {booking.guests === 5 && (
+                                                                    <span className="text-[10px] text-red-500 font-black flex items-center gap-0.5 mt-0.5">
+                                                                        <AlertCircle size={10} /> 需提醒共鍋
+                                                                    </span>
+                                                                )}
+                                                            </div>
+                                                        </td>
+                                                        <td className="px-6 py-4">
+                                                            <div className="flex gap-2">
+                                                               {!booking.isFinished && <button onClick={() => handleEditBooking(booking)} className="p-2 text-blue-400 hover:bg-blue-50 rounded-lg"><Edit3 size={16} /></button>}
+                                                               <button onClick={() => setBookings(bookings.filter(b => b.id !== booking.id))} className="p-2 text-red-300 hover:text-red-500"><Trash2 size={16} /></button>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                );
+                                            })}
+                                        </tbody>
+                                    </table>
+                                </div>
+                            </div>
+                        )}
+
+                        {activeTab === 'newBooking' && (
+                            <div className="max-w-2xl mx-auto bg-white p-8 rounded-3xl shadow-xl border border-slate-100">
+                                <h2 className="text-2xl font-black mb-8">{editingBooking ? '修改預約' : '建立預約'}</h2>
+                                <div className="space-y-6">
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <input type="date" className="p-4 bg-slate-50 rounded-2xl font-bold" value={formData.date} onChange={e => setFormData({...formData, date: e.target.value, tableId: ''})} />
+                                        <select className="p-4 bg-slate-50 rounded-2xl font-bold" value={formData.time} onChange={e => setFormData({...formData, time: e.target.value, tableId: ''})}>
+                                            {generateTimeOptions().map(t => <option key={t} value={t}>{t}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="grid grid-cols-2 gap-4">
+                                        <input type="text" placeholder="姓名" className="p-4 bg-slate-50 rounded-2xl font-bold" value={formData.name} onChange={e => setFormData({...formData, name: e.target.value})} />
+                                        <input type="text" placeholder="電話" className="p-4 bg-slate-50 rounded-2xl font-bold" value={formData.phone} onChange={e => setFormData({...formData, phone: e.target.value})} />
+                                    </div>
+                                    <div className="flex flex-col gap-2">
+                                        <div className="flex gap-2">
+                                            {[1,2,3,4,5].map(num => (
+                                                <button key={num} onClick={() => setFormData({...formData, guests: num, tableId: ''})} className={`flex-1 py-4 rounded-2xl font-black border-2 ${formData.guests === num ? 'bg-slate-800 text-white' : 'bg-white text-slate-400'}`}>{num}</button>
+                                            ))}
+                                        </div>
+                                        {formData.guests === 5 && (
+                                            <div className="flex items-center gap-1 text-red-500 font-bold text-xs mt-1 animate-pulse">
+                                                <AlertCircle size={14} /> 提醒一位需共鍋
+                                            </div>
+                                        )}
+                                    </div>
+                                    <div className="grid grid-cols-4 gap-2">
+                                        {TABLES.map(table => {
+                                            const conflict = isTableConflict(table.id, formData.date, formData.time, editingBooking?.id);
+                                            const overCap = formData.guests > table.capacity && !(formData.guests === 5 && table.capacity === 4);
+                                            return (
+                                                <button key={table.id} disabled={conflict || overCap} onClick={() => setFormData({...formData, tableId: table.id})} className={`py-4 rounded-2xl font-bold border-2 ${conflict || overCap ? 'opacity-20 cursor-not-allowed' : formData.tableId === table.id ? 'bg-orange-500 text-white border-orange-500' : 'bg-white text-slate-600'}`}>
+                                                    {table.id}
+                                                </button>
+                                            );
+                                        })}
+                                    </div>
+                                    <div className="pt-6 flex gap-3">
+                                        <button onClick={() => setActiveTab('bookingList')} className="flex-1 py-5 font-bold text-slate-400">取消</button>
+                                        <button onClick={handleSaveBooking} className="flex-[2] py-5 bg-slate-800 text-white rounded-3xl font-bold shadow-xl flex items-center justify-center gap-2">
+                                            <CheckCircle size={20}/> 確認預約
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+
+                    {quickSeatModal.isOpen && (
+                        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+                            <div className="bg-white w-full max-w-sm rounded-3xl p-8 shadow-2xl">
+                                <h3 className="text-xl font-black mb-8">{quickSeatModal.tableId} 號桌 - 帶位</h3>
+                                <div className="grid grid-cols-3 gap-3">
+                                    {[1, 2, 3, 4, 5].map(num => {
+                                        const table = TABLES.find(t => t.id === quickSeatModal.tableId);
+                                        const disabled = num > table.capacity && !(num === 5 && table.capacity === 4);
+                                        return <button key={num} disabled={disabled} onClick={() => handleQuickSeat(num)} className={`py-5 rounded-2xl font-black text-2xl border-2 ${disabled ? 'opacity-10' : 'hover:border-orange-500 text-slate-700'}`}>{num}</button>
+                                    })}
+                                </div>
+                                <button onClick={() => setQuickSeatModal({ isOpen: false, tableId: null })} className="w-full mt-6 py-4 text-slate-400 font-bold">關閉</button>
+                            </div>
+                        </div>
+                    )}
+                </div>
+            );
+        };
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<App />);
+    </script>
+</body>
+</html>
